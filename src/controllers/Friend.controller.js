@@ -5,6 +5,7 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { User } from "../models/User.model.js";
 import { BlockedUser } from "../models/BlockUser.model.js";
+import { Message } from "../models/Message.model.js";
 
 //****** SENDING FRIEND REQUEST ******* */
 const sendFriendRequest = asyncHandler(async (req, res) => {
@@ -293,14 +294,31 @@ const unFriend = asyncHandler(async (req, res) => {
                 { currentUser: friendUser._id, friend: userId },
             ],
         });
+        
+        // Delete friend requests between users
+        await FriendRequest.deleteMany({
+            $or: [
+                { fromUser: userId, toUser: friendUser._id },
+                { fromUser: friendUser._id, toUser: userId },
+            ],
+        });
+
+        // Delete all messages between the two users
+        await Message.deleteMany({
+            $or: [
+                { sender: userId, recipient: friendUser._id },
+                { sender: friendUser._id, recipient: userId },
+            ],
+        });
+
         return res
             .status(200)
             .json(
-                new ApiResponse(200, null, "Friendship removed successfully.")
+                new ApiResponse(200, null, "Friendship and chat history removed successfully.")
             );
     } catch (error) {
         console.log("Error while unfriend:", error);
-        throw new ApiError(500, "Intrnal server error");
+        throw new ApiError(500, "Internal server error");
     }
 });
 

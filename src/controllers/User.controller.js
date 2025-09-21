@@ -5,6 +5,7 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import { uploadOnCloudinary } from "../utils/Cloudinary.js";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
+import { FriendRequest } from "../models/FriendRequest.model.js";
 
 //****** GENERATE ACCESS AND REFRESH TOKEN: *******/
 const generateAccessAndRefreshTokens = async (userId) => {
@@ -29,6 +30,7 @@ const generateAccessAndRefreshTokens = async (userId) => {
 //****  REGISTER USER  **** */
 const registerUser = asyncHandler(async (req, res) => {
     const { fullName, email, password } = req.body;
+    console.log("BODY: ", req.body);
 
     if ([fullName, email, password].some((field) => field?.trim() === "")) {
         throw new ApiError(400, "All fields are required");
@@ -89,13 +91,13 @@ const registerUser = asyncHandler(async (req, res) => {
 
 //****  LOGIN USER  **** */
 const loginUser = asyncHandler(async (req, res) => {
-    const { email, userName, password } = req.body;
-    if (!userName && !email) {
-        throw new ApiError(400, "username or email is required");
+    const { email, password } = req.body;
+    if (!email) {
+        throw new ApiError(400, "email is required");
     }
 
     const user = await User.findOne({
-        $or: [{ userName }, { email }],
+        email
     });
 
     if (!user) {
@@ -173,7 +175,7 @@ const logoutUser = asyncHandler(async (req, res) => {
 //****** CHANGING PASSWORD **** */
 const changeCurrentPassword = asyncHandler(async (req, res) => {
     const { oldPassword, newPassword } = req.body;
-    console.log("req body:",req.body);
+    console.log("req body:", req.body);
 
     const user = await User.findById(req.user?._id);
     const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
@@ -181,8 +183,8 @@ const changeCurrentPassword = asyncHandler(async (req, res) => {
     if (!isPasswordCorrect) {
         // throw new ApiError(400, "Invalid old password!");
         return res
-        .status(200)
-        .json(new ApiResponse(400,{}, "Invalid old password!"));
+            .status(200)
+            .json(new ApiResponse(400, {}, "Invalid old password!"));
     }
 
     user.password = newPassword;
@@ -325,7 +327,7 @@ const getCurrentUser = asyncHandler(async (req, res) => {
 //****** FETCHING USER DATA BY ID ******* */
 const getUserById = asyncHandler(async (req, res) => {
     const { userId } = req.params;
-    console.log("uid:",userId);
+    const currentUserId = req.user?._id;
 
     if (!userId) {
         throw new ApiError(400, "User id is required!");
@@ -345,8 +347,28 @@ const getUserById = asyncHandler(async (req, res) => {
         "-password -refreshToken"
     );
 
+    const friendShip = await FriendRequest.findOne({
+        $or: [
+            { fromUser: currentUserId, toUser: newUserId },
+            { fromUser: newUserId, toUser: currentUserId },
+        ],
+    });
+
     if (!user) {
         throw new ApiError(404, "User not found!");
+    }
+
+    if (friendShip) {
+        const userObj = user.toObject();
+        userObj.friendshipStatus = friendShip.status;
+        userObj.sentByCurrentUser = friendShip.fromUser.toString() === currentUserId.toString();
+        userObj.requestId = friendShip._id;
+
+        return res
+            .status(200)
+            .json(
+                new ApiResponse(200, userObj, "User fetched successfully!")
+            );
     }
 
     return res

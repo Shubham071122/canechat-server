@@ -346,6 +346,7 @@ const blockUser = asyncHandler(async (req, res) => {
     const existingBlock = await BlockedUser.findOne({
         blocker: userId,
         blocked: friendUser._id,
+        isActive: true,
     });
 
     if (existingBlock) {
@@ -404,10 +405,11 @@ const unblockUser = asyncHandler(async (req, res) => {
     const existingBlock = await BlockedUser.findOne({
         blocker: userId,
         blocked: friendUser._id,
+        isActive: true,
     });
 
     if (!existingBlock) {
-        throw new ApiError(404, "Block entry not found.");
+        throw new ApiError(404, "Block entry not found or user is not blocked.");
     }
 
     // Checking if the user is friends with the specified user
@@ -423,10 +425,10 @@ const unblockUser = asyncHandler(async (req, res) => {
     }
 
     try {
-        // Remove the block entry
-        await BlockedUser.deleteOne({
-            blocker: userId,
-            blocked: friendUser._id,
+        // Mark the block as inactive instead of deleting it
+        await BlockedUser.findByIdAndUpdate(existingBlock._id, {
+            isActive: false,
+            unblockDate: new Date(),
         });
 
         return res

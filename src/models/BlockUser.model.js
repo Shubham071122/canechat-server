@@ -11,6 +11,14 @@ const blockedUserSchema = new Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: 'User',
             required: true,
+        },
+        isActive: {
+            type: Boolean,
+            default: true,
+        },
+        unblockDate: {
+            type: Date,
+            default: null,
         }
     },
     {
@@ -18,7 +26,7 @@ const blockedUserSchema = new Schema(
     }
 );
 
-// Ensuring the combination of blocker and blocked is unique
-blockedUserSchema.index({ blocker: 1, blocked: 1 }, { unique: true });
+// Ensuring the combination of blocker and blocked is unique only for active blocks
+blockedUserSchema.index({ blocker: 1, blocked: 1, isActive: 1 }, { unique: true, partialFilterExpression: { isActive: true } });
 
 export const BlockedUser = mongoose.model("BlockedUser", blockedUserSchema);

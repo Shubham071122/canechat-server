@@ -6,7 +6,6 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import { User } from "../models/User.model.js";
 import { BlockedUser } from "../models/BlockUser.model.js";
 import { Friend } from "../models/Friend.model.js";
-import { io, users } from "../config/socket.js";
 
 //**** CREATE MESSAGE ***** */
 const createMessage = asyncHandler(async (req, res) => {
@@ -33,9 +32,6 @@ const createMessage = asyncHandler(async (req, res) => {
     const senderUser = await User.findOne({ _id: senderObjectId });
     const recipientUser = await User.findOne({ _id: recipientObjectId });
 
-    console.log("senderUser:", senderUser);
-    console.log("recipientUser:", recipientUser);
-
     if (!senderUser || !recipientUser) {
         throw new ApiError(404, "Sender or recipient not found");
     }
@@ -49,14 +45,8 @@ const createMessage = asyncHandler(async (req, res) => {
     const isBlocked = await BlockedUser.findOne({
         blocker: recipientUser._id,
         blocked: senderUser._id,
+        isActive: true,
     });
-
-    if (isBlocked) {
-        throw new ApiError(
-            403,
-            "You are blocked by this user and cannot send messages."
-        );
-    }
 
     // Checking if the sender and recipient are still friends
     const isFriend = await Friend.findOne({
@@ -71,16 +61,19 @@ const createMessage = asyncHandler(async (req, res) => {
     }
 
     try {
+        // Always save the message to database (even if sender is blocked)
         const newMessage = await Message.create({
             sender: senderUser._id,
             recipient: recipientUser._id,
             message,
         });
 
-        // Emit the message to the recipient via socket
-        const recipientSocketId = users[recipientUser._id];
-        if (recipientSocketId) {
-            io.to(recipientSocketId).emit("receiveMessage", newMessage);
+        // Only emit the message to recipient if sender is NOT blocked
+        if (!isBlocked) {
+            const recipientSocketId = users[recipientUser._id];
+            if (recipientSocketId) {
+                io.to(recipientSocketId).emit("receiveMessage", newMessage);
+            }
         }
 
         return res
@@ -482,6 +475,13 @@ const fetchAllMessages = asyncHandler(async (req, res) => {
     }
 
     try {
+        // Check if current user has blocked the friend (active block)
+        const activeBlockInfo = await BlockedUser.findOne({
+            blocker: userId,
+            blocked: friendUserId,
+            isActive: true,
+        });
+
         const messages = await Message.find({
             $or: [
                 { sender: userId, recipient: friendUserId },
@@ -494,7 +494,65 @@ const fetchAllMessages = asyncHandler(async (req, res) => {
             })
             .sort({ createdAt: 1 });
 
-        const formattedMessages = messages.map((msg) => ({
+        let filteredMessages;
+        
+        if (activeBlockInfo) {
+            // Currently blocked: show messages before block + current user's messages after block
+            filteredMessages = messages.filter(msg => {
+                const messageDate = new Date(msg.createdAt);
+                const blockDate = new Date(activeBlockInfo.createdAt);
+                
+                // Show messages from before block date
+                if (messageDate < blockDate) {
+                    return true;
+                }
+                
+                // After block date, only show current user's messages
+                return msg.sender._id.toString() === userId.toString();
+            });
+        } else {
+            // Not currently blocked, but check for block history
+            const allBlocks = await BlockedUser.find({
+                blocker: userId,
+                blocked: friendUserId,
+            }).sort({ createdAt: -1 });
+            
+            if (allBlocks.length > 0) {
+                // Find the most recent unblock date
+                const mostRecentBlock = allBlocks[0];
+                
+                if (mostRecentBlock.unblockDate) {
+                    // There was a previous block-unblock cycle
+                    // Hide messages sent by blocked user during the blocked period
+                    filteredMessages = messages.filter(msg => {
+                        const messageDate = new Date(msg.createdAt);
+                        const blockStartDate = new Date(mostRecentBlock.createdAt);
+                        const unblockDate = new Date(mostRecentBlock.unblockDate);
+                        const senderIsCurrentUser = msg.sender._id.toString() === userId.toString();
+                        
+                        // Always show current user's messages
+                        if (senderIsCurrentUser) {
+                            return true;
+                        }
+                        
+                        // For friend's messages, hide those sent during the blocked period
+                        if (messageDate >= blockStartDate && messageDate < unblockDate) {
+                            return false; // Hide messages sent during blocked period
+                        }
+                        
+                        return true; // Show all other messages
+                    });
+                } else {
+                    // Currently blocked (shouldn't happen as we check activeBlockInfo above)
+                    filteredMessages = messages;
+                }
+            } else {
+                // No block history, show all messages
+                filteredMessages = messages;
+            }
+        }
+
+        const formattedMessages = filteredMessages.map((msg) => ({
             messageId: msg._id,
             message: msg.message,
             senderUserName: msg.sender.userName,
@@ -502,6 +560,7 @@ const fetchAllMessages = asyncHandler(async (req, res) => {
             createdAt: msg.createdAt,
             updatedAt: msg.updatedAt,
         }));
+        
         return res
             .status(200)
             .json(

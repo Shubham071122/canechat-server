@@ -6,6 +6,7 @@ import { uploadOnCloudinary } from "../utils/Cloudinary.js";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import { FriendRequest } from "../models/FriendRequest.model.js";
+import { BlockedUser } from "../models/BlockUser.model.js";
 
 //****** GENERATE ACCESS AND REFRESH TOKEN: *******/
 const generateAccessAndRefreshTokens = async (userId) => {
@@ -354,12 +355,22 @@ const getUserById = asyncHandler(async (req, res) => {
         ],
     });
 
+    // Only check if current user blocked the target user (not the other way around)
+    const blockStatus = await BlockedUser.findOne({
+        blocker: currentUserId, 
+        blocked: newUserId,
+        isActive: true
+    });
+
     if (!user) {
         throw new ApiError(404, "User not found!");
     }
 
+    const userObj = user.toObject();
+    
+    userObj.isBlocked = blockStatus ? true : false;
+
     if (friendShip) {
-        const userObj = user.toObject();
         userObj.friendshipStatus = friendShip.status;
         userObj.sentByCurrentUser = friendShip.fromUser.toString() === currentUserId.toString();
         userObj.requestId = friendShip._id;
@@ -373,7 +384,7 @@ const getUserById = asyncHandler(async (req, res) => {
 
     return res
         .status(200)
-        .json(new ApiResponse(200, user, "User fetched successfully!"));
+        .json(new ApiResponse(200, userObj, "User fetched successfully!"));
 });
 
 //****** DELETE ACCOUNT ******* */
